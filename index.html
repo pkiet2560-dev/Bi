@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>8-Ball Pool Mini</title>
+    <style>
+        body { background: #2c3e50; display: flex; flex-direction: column; align-items: center; color: white; font-family: sans-serif; }
+        canvas { background: #27ae60; border: 15px solid #7e522a; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5); cursor: crosshair; }
+        .controls { margin-top: 10px; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <h2>Bida 8 Bi - HTML5</h2>
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    
+    <div class="controls">
+        <p>Chuột trái: Giữ và kéo để chỉnh lực | Di chuyển để chỉnh góc</p>
+        <p id="powerDisplay">Lực: 0%</p>
+    </div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const powerTxt = document.getElementById('powerDisplay');
+
+// Cấu hình vật lý
+const FRICTION = 0.985;
+const BALL_RADIUS = 12;
+
+let mouse = { x: 0, y: 0, isDown: false };
+let cueBall = { x: 200, y: 200, vx: 0, vy: 0, color: 'white' };
+let balls = [cueBall];
+
+// Tạo một vài bi mục tiêu (ví dụ đơn giản)
+for(let i=0; i<5; i++) {
+    balls.push({ x: 500 + i*5, y: 150 + i*30, vx: 0, vy: 0, color: 'red' });
+}
+
+// Lắng nghe sự kiện chuột
+canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - rect.left;
+    mouse.y = e.clientY - rect.top;
+});
+
+canvas.addEventListener('mousedown', () => { if(Math.abs(cueBall.vx) < 0.1) mouse.isDown = true; });
+canvas.addEventListener('mouseup', shoot);
+
+function shoot() {
+    if(!mouse.isDown) return;
+    let dx = cueBall.x - mouse.x;
+    let dy = cueBall.y - mouse.y;
+    let strength = Math.min(Math.sqrt(dx*dx + dy*dy) / 10, 20); // Giới hạn lực
+    
+    cueBall.vx = (dx / 10) * 0.5;
+    cueBall.vy = (dy / 10) * 0.5;
+    
+    mouse.isDown = false;
+}
+
+function update() {
+    balls.forEach(b => {
+        // Ma sát
+        b.vx *= FRICTION;
+        b.vy *= FRICTION;
+        b.x += b.vx;
+        b.y += b.vy;
+
+        // Va chạm tường
+        if (b.x < BALL_RADIUS || b.x > canvas.width - BALL_RADIUS) { b.vx *= -1; b.x = b.x < BALL_RADIUS ? BALL_RADIUS : canvas.width - BALL_RADIUS; }
+        if (b.y < BALL_RADIUS || b.y > canvas.height - BALL_RADIUS) { b.vy *= -1; b.y = b.y < BALL_RADIUS ? BALL_RADIUS : canvas.height - BALL_RADIUS; }
+    });
+
+    // Xử lý va chạm giữa các bi (Simplified)
+    for (let i = 0; i < balls.length; i++) {
+        for (let j = i + 1; j < balls.length; j++) {
+            let b1 = balls[i], b2 = balls[j];
+            let dx = b2.x - b1.x, dy = b2.y - b1.y;
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < BALL_RADIUS * 2) {
+                // Giải quyết chồng lấp
+                let angle = Math.atan2(dy, dx);
+                let tx = b1.x + Math.cos(angle) * BALL_RADIUS * 2;
+                let ty = b1.y + Math.sin(angle) * BALL_RADIUS * 2;
+                let ax = (tx - b2.x) * 0.5, ay = (ty - b2.y) * 0.5;
+                b1.vx -= ax; b1.vy -= ay; b2.vx += ax; b2.vy += ay;
+            }
+        }
+    }
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Vẽ đường định hướng và gậy khi đang giữ chuột
+    if (mouse.isDown) {
+        let dx = cueBall.x - mouse.x;
+        let dy = cueBall.y - mouse.y;
+        
+        // Vẽ đường dự đoán (Trajectory)
+        ctx.beginPath();
+        ctx.setLineDash([5, 5]);
+        ctx.moveTo(cueBall.x, cueBall.y);
+        ctx.lineTo(cueBall.x + dx * 2, cueBall.y + dy * 2);
+        ctx.strokeStyle = "rgba(255,255,255,0.5)";
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Vẽ gậy bida
+        ctx.beginPath();
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = "#8e44ad";
+        ctx.moveTo(mouse.x, mouse.y);
+        ctx.lineTo(cueBall.x, cueBall.y);
+        ctx.stroke();
+        
+        powerTxt.innerText = `Lực: ${Math.round(Math.min(Math.sqrt(dx*dx+dy*dy), 200)/2)}%`;
+    }
+
+    // Vẽ các bi
+    balls.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, BALL_RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = b.color;
+        ctx.fill();
+        ctx.closePath();
+    });
+
+    update();
+    requestAnimationFrame(draw);
+}
+
+draw();
+</script>
+</body>
+</html>
