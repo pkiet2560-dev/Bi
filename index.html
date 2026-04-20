@@ -2,136 +2,448 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>8-Ball Pool Mini</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>8-Ball Pool Pro Mobile</title>
     <style>
-        body { background: #2c3e50; display: flex; flex-direction: column; align-items: center; color: white; font-family: sans-serif; }
-        canvas { background: #27ae60; border: 15px solid #7e522a; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5); cursor: crosshair; }
-        .controls { margin-top: 10px; text-align: center; }
+        body { margin: 0; padding: 0; background: #2c3e50; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: white; font-family: sans-serif; overflow: hidden; touch-action: none; }
+        
+        #gameWrapper { position: relative; box-shadow: 0 10px 20px rgba(0,0,0,0.5); border-radius: 10px; border: 12px solid #5d4037; /* Viền gỗ */ background: #7e522a; }
+
+        canvas { background: #27ae60; /* Màu bàn */ display: block; border-radius: 4px; }
+
+        /* UI Controls */
+        #ui-container { position: absolute; bottom: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
+        
+        /* Thanh lực đứng */
+        #power-slider-container { position: absolute; right: -50px; top: 50px; height: 200px; width: 30px; background: rgba(0,0,0,0.5); border-radius: 15px; border: 2px solid #fff; pointer-events: auto; display: flex; align-items: flex-end; justify-content: center; padding: 5px; box-sizing: border-box; }
+        #power-level { width: 100%; background: linear-gradient(to top, #2ecc71, #f1c40f, #e74c3c); border-radius: 10px; height: 0%; transition: height 0.1s; }
+
+        #status { position: absolute; top: -40px; left: 0; width: 100%; text-align: center; font-weight: bold; font-size: 18px; text-shadow: 1px 1px 2px black; }
+        
+        /* Nút Reset */
+        #reset-btn { position: absolute; top: 10px; right: 10px; padding: 8px 15px; background: #e74c3c; border: none; color: white; border-radius: 5px; cursor: pointer; pointer-events: auto; }
     </style>
 </head>
 <body>
 
-    <h2>Bida 8 Bi - HTML5</h2>
-    <canvas id="gameCanvas" width="800" height="400"></canvas>
-    
-    <div class="controls">
-        <p>Chuột trái: Giữ và kéo để chỉnh lực | Di chuyển để chỉnh góc</p>
-        <p id="powerDisplay">Lực: 0%</p>
+    <div id="gameWrapper">
+        <div id="status">Đến lượt bạn (Bi trắng)</div>
+        <button id="reset-btn" onclick="initGame()">Xếp lại bàn</button>
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="power-slider-container">
+            <div id="power-level"></div>
+        </div>
     </div>
 
 <script>
+// --- CẤU HÌNH & BIẾN TOÀN CỤC ---
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-const powerTxt = document.getElementById('powerDisplay');
+const powerLevelEl = document.getElementById('power-level');
+const statusEl = document.getElementById('status');
 
-// Cấu hình vật lý
-const FRICTION = 0.985;
-const BALL_RADIUS = 12;
+// Tỷ lệ màn hình bida chuẩn 2:1
+const BOARD_WIDTH = 800; 
+const BOARD_HEIGHT = 400;
+const BALL_RADIUS = 10;
+const POCKET_RADIUS = 20;
+const FRICTION = 0.988; // Ma sát bàn
+const MAX_POWER = 25;
 
-let mouse = { x: 0, y: 0, isDown: false };
-let cueBall = { x: 200, y: 200, vx: 0, vy: 0, color: 'white' };
-let balls = [cueBall];
+let scale = 1; // Tỷ lệ scale để responsive
+let balls = [];
+let pockets = [];
+let cueBall;
 
-// Tạo một vài bi mục tiêu (ví dụ đơn giản)
-for(let i=0; i<5; i++) {
-    balls.push({ x: 500 + i*5, y: 150 + i*30, vx: 0, vy: 0, color: 'red' });
+// Trạng thái game
+let gameState = {
+    isDraggingPower: false,
+    cueAngle: 0, // Góc của gậy (radian)
+    power: 0,
+    isMoving: false, // Các bi có đang lăn không
+    pocketedBalls: [] // Bi đã vào lỗ
+};
+
+// Định nghĩa màu sắc 15 bi (8-ball chuẩn)
+const ballColors = [
+    '#ecf0f1', // 0: Trắng (Cue)
+    '#f1c40f', '#2980b9', '#e74c3c', '#8e44ad', '#d35400', '#27ae60', '#c0392b', // 1-7: Trơn
+    '#2c3e50', // 8: Đen
+    '#f1c40f', '#2980b9', '#e74c3c', '#8e44ad', '#d35400', '#27ae60', '#c0392b'  // 9-15: Sọc (trong demo này vẽ màu giống trơn cho đơn giản)
+];
+
+// --- KHỞI TẠO ---
+function resize() {
+    const wrapper = document.getElementById('gameWrapper');
+    const padding = 20;
+    const maxWidth = window.innerWidth - padding * 2;
+    const maxHeight = window.innerHeight - padding * 3; // Trừ hao cho UI
+
+    scale = Math.min(maxWidth / BOARD_WIDTH, maxHeight / BOARD_HEIGHT);
+    
+    canvas.width = BOARD_WIDTH * scale;
+    canvas.height = BOARD_HEIGHT * scale;
+    ctx.scale(scale, scale); // Quan trọng: Mọi lệnh vẽ sau đó dùng tọa độ 800x400
+
+    wrapper.style.width = canvas.width + "px";
+    wrapper.style.height = canvas.height + "px";
 }
 
-// Lắng nghe sự kiện chuột
-canvas.addEventListener('mousemove', e => {
-    const rect = canvas.getBoundingClientRect();
-    mouse.x = e.clientX - rect.left;
-    mouse.y = e.clientY - rect.top;
-});
+function initGame() {
+    balls = [];
+    gameState.pocketedBalls = [];
+    gameState.power = 0;
+    updatePowerUI();
+    statusEl.innerText = "Kéo trên màn hình để chỉnh góc, kéo thanh bên phải để chỉnh lực";
 
-canvas.addEventListener('mousedown', () => { if(Math.abs(cueBall.vx) < 0.1) mouse.isDown = true; });
-canvas.addEventListener('mouseup', shoot);
+    // 1. Tạo 6 Lỗ
+    pockets = [
+        { x: 0, y: 0 }, { x: BOARD_WIDTH / 2, y: 0 }, { x: BOARD_WIDTH, y: 0 }, // Trên
+        { x: 0, y: BOARD_HEIGHT }, { x: BOARD_WIDTH / 2, y: BOARD_HEIGHT }, { x: BOARD_WIDTH, y: BOARD_HEIGHT } // Dưới
+    ];
 
-function shoot() {
-    if(!mouse.isDown) return;
-    let dx = cueBall.x - mouse.x;
-    let dy = cueBall.y - mouse.y;
-    let strength = Math.min(Math.sqrt(dx*dx + dy*dy) / 10, 20); // Giới hạn lực
-    
-    cueBall.vx = (dx / 10) * 0.5;
-    cueBall.vy = (dy / 10) * 0.5;
-    
-    mouse.isDown = false;
-}
+    // 2. Tạo Bi Cái (Cue Ball)
+    cueBall = { x: BOARD_WIDTH * 0.25, y: BOARD_HEIGHT / 2, vx: 0, vy: 0, color: ballColors[0], id: 0 };
+    balls.push(cueBall);
 
-function update() {
-    balls.forEach(b => {
-        // Ma sát
-        b.vx *= FRICTION;
-        b.vy *= FRICTION;
-        b.x += b.vx;
-        b.y += b.vy;
+    // 3. Xếp 15 bi mục tiêu (Hình tam giác)
+    const startX = BOARD_WIDTH * 0.7;
+    const startY = BOARD_HEIGHT / 2;
+    let ballIdx = 1;
+    const rows = 5;
 
-        // Va chạm tường
-        if (b.x < BALL_RADIUS || b.x > canvas.width - BALL_RADIUS) { b.vx *= -1; b.x = b.x < BALL_RADIUS ? BALL_RADIUS : canvas.width - BALL_RADIUS; }
-        if (b.y < BALL_RADIUS || b.y > canvas.height - BALL_RADIUS) { b.vy *= -1; b.y = b.y < BALL_RADIUS ? BALL_RADIUS : canvas.height - BALL_RADIUS; }
-    });
+    // Sắp xếp ID bi để bi số 8 nằm giữa
+    let ballIds = [1, 9, 2, 10, 8, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15]; 
+    let orderCounter = 0;
 
-    // Xử lý va chạm giữa các bi (Simplified)
-    for (let i = 0; i < balls.length; i++) {
-        for (let j = i + 1; j < balls.length; j++) {
-            let b1 = balls[i], b2 = balls[j];
-            let dx = b2.x - b1.x, dy = b2.y - b1.y;
-            let dist = Math.sqrt(dx*dx + dy*dy);
-            if (dist < BALL_RADIUS * 2) {
-                // Giải quyết chồng lấp
-                let angle = Math.atan2(dy, dx);
-                let tx = b1.x + Math.cos(angle) * BALL_RADIUS * 2;
-                let ty = b1.y + Math.sin(angle) * BALL_RADIUS * 2;
-                let ax = (tx - b2.x) * 0.5, ay = (ty - b2.y) * 0.5;
-                b1.vx -= ax; b1.vy -= ay; b2.vx += ax; b2.vy += ay;
-            }
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c <= r; c++) {
+            let x = startX + r * (BALL_RADIUS * 2 * 0.88); // 0.88 để chúng khít nhau hơn
+            let y = startY - (r * BALL_RADIUS) + (c * BALL_RADIUS * 2);
+            
+            // Thêm một chút ngẫu nhiên để không bị hoàn hảo quá
+            balls.push({ 
+                x: x, y: y, 
+                vx: (Math.random()-0.5)*0.1, vy: (Math.random()-0.5)*0.1, 
+                color: ballColors[ballIds[orderCounter]], 
+                id: ballIds[orderCounter] 
+            });
+            orderCounter++;
         }
     }
 }
 
-function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+// --- XỬ LÝ SỰ KIỆN (INPUT) ---
+const powerSlider = document.getElementById('power-slider-container');
 
-    // Vẽ đường định hướng và gậy khi đang giữ chuột
-    if (mouse.isDown) {
-        let dx = cueBall.x - mouse.x;
-        let dy = cueBall.y - mouse.y;
-        
-        // Vẽ đường dự đoán (Trajectory)
-        ctx.beginPath();
-        ctx.setLineDash([5, 5]);
-        ctx.moveTo(cueBall.x, cueBall.y);
-        ctx.lineTo(cueBall.x + dx * 2, cueBall.y + dy * 2);
-        ctx.strokeStyle = "rgba(255,255,255,0.5)";
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Vẽ gậy bida
-        ctx.beginPath();
-        ctx.lineWidth = 6;
-        ctx.strokeStyle = "#8e44ad";
-        ctx.moveTo(mouse.x, mouse.y);
-        ctx.lineTo(cueBall.x, cueBall.y);
-        ctx.stroke();
-        
-        powerTxt.innerText = `Lực: ${Math.round(Math.min(Math.sqrt(dx*dx+dy*dy), 200)/2)}%`;
-    }
-
-    // Vẽ các bi
-    balls.forEach(b => {
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, BALL_RADIUS, 0, Math.PI * 2);
-        ctx.fillStyle = b.color;
-        ctx.fill();
-        ctx.closePath();
-    });
-
-    update();
-    requestAnimationFrame(draw);
+// Helper lấy tọa độ touch/mouse chuẩn xác
+function getEventPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+        x: (clientX - rect.left) / scale,
+        y: (clientY - rect.top) / scale
+    };
 }
 
-draw();
+// Xử lý kéo Thanh Lực ( riêng biệt)
+function handlePowerStart(e) { e.stopPropagation(); gameState.isDraggingPower = true; handlePowerMove(e); }
+function handlePowerMove(e) {
+    if (!gameState.isDraggingPower || gameState.isMoving) return;
+    e.preventDefault(); // Ngăn scroll màn hình
+    const rect = powerSlider.getBoundingClientRect();
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    
+    let offset = rect.bottom - clientY;
+    let percent = Math.max(0, Math.min(1, offset / rect.height));
+    
+    gameState.power = percent * MAX_POWER;
+    updatePowerUI();
+}
+function handlePowerEnd() { if(gameState.isDraggingPower) shoot(); gameState.isDraggingPower = false; }
+
+// Đăng ký sự kiện thanh lực (Mobile + PC)
+powerSlider.addEventListener('mousedown', handlePowerStart);
+window.addEventListener('mousemove', handlePowerMove);
+window.addEventListener('mouseup', handlePowerEnd);
+
+powerSlider.addEventListener('touchstart', handlePowerStart, {passive: false});
+window.addEventListener('touchmove', handlePowerMove, {passive: false});
+window.addEventListener('touchend', handlePowerEnd);
+
+
+// Xử lý vuốt trên sân để chỉnh góc (Touch trên Canvas)
+let touchStartX = 0;
+let angleAtTouchStart = 0;
+
+canvas.addEventListener('touchstart', (e) => {
+    if (gameState.isMoving) return;
+    const pos = getEventPos(e);
+    touchStartX = pos.x;
+    angleAtTouchStart = gameState.cueAngle;
+}, {passive: true});
+
+canvas.addEventListener('touchmove', (e) => {
+    if (gameState.isMoving || gameState.isDraggingPower) return;
+    if (e.touches.length > 1) return; // Không xử lý zoom muti-touch
+    
+    const pos = getEventPos(e);
+    const dx = pos.x - touchStartX;
+    
+    // Độ nhạy xoay: vuốt ngang sân 1px = 0.01 radian
+    gameState.cueAngle = angleAtTouchStart + dx * 0.005;
+}, {passive: true});
+
+// Hỗ trợ chuột cho PC (Xoay cơ theo chuột)
+canvas.addEventListener('mousemove', (e) => {
+    if (gameState.isMoving || 'ontouchstart' in window) return; // Skip nếu là mobile
+    const pos = getEventPos(e);
+    // Tính góc giữa chuột và bi cái
+    gameState.cueAngle = Math.atan2(pos.y - cueBall.y, pos.x - cueBall.x);
+});
+canvas.addEventListener('click', (e) => {
+    // Trên PC click vào sân mà có lực thì bắn luôn (nếu không dùng slider)
+    if (!gameState.isMoving && gameState.power > 1) shoot();
+});
+
+
+function updatePowerUI() {
+    const percent = (gameState.power / MAX_POWER) * 100;
+    powerLevelEl.style.height = percent + '%';
+}
+
+// --- LOGIC VẬT LÝ ---
+function shoot() {
+    if (gameState.isMoving || gameState.power < 0.5) return;
+
+    // Bắn theo hướng ngược lại với hướng gậy chỉ vào (vector lực)
+    cueBall.vx = -Math.cos(gameState.cueAngle) * gameState.power;
+    cueBall.vy = -Math.sin(gameState.cueAngle) * gameState.power;
+
+    gameState.power = 0;
+    updatePowerUI();
+    gameState.isMoving = true;
+    statusEl.innerText = "Đang chạy...";
+}
+
+function resolveCollision(b1, b2) {
+    const dx = b2.x - b1.x;
+    const dy = b2.y - b1.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < BALL_RADIUS * 2) {
+        // 1. Giải quyết chồng lấp (đẩy bi ra để không bị dính vào nhau)
+        const overlap = (BALL_RADIUS * 2 - distance) / 2;
+        const nx = dx / distance; // Vector pháp tuyến n
+        const ny = dy / distance;
+        
+        b1.x -= nx * overlap; b1.y -= ny * overlap;
+        b2.x += nx * overlap; b2.y += ny * overlap;
+
+        // 2. Vật lý va chạm đàn hồi (Simplified Elastic Collision)
+        // Vận tốc tương đối
+        const vdx = b2.vx - b1.vx;
+        const vdy = b2.vy - b1.vy;
+
+        // Vận tốc trên phương pháp tuyến
+        const velAlongNormal = vdx * nx + vdy * ny;
+
+        // Chỉ xử lý nếu chúng đang lao vào nhau
+        if (velAlongNormal > 0) return;
+
+        // Hệ số đàn hồi (bida gần như bằng 1)
+        const j = -(1 + 0.9) * velAlongNormal;
+        const impulse = j / 2; // Khối lượng bằng nhau nên m1+m2 = 2
+
+        const ix = impulse * nx;
+        const iy = impulse * ny;
+        b1.vx -= ix; b1.vy -= iy;
+        b2.vx += ix; b2.vy += iy;
+    }
+}
+
+function updatePhysics() {
+    let movingCount = 0;
+
+    for (let i = 0; i < balls.length; i++) {
+        let b = balls[i];
+        
+        // Cập nhật vị trí
+        b.x += b.vx;
+        b.y += b.vy;
+
+        // Áp dụng ma sát
+        b.vx *= FRICTION;
+        b.vy *= FRICTION;
+
+        // Dừng bi nếu quá chậm
+        if (Math.abs(b.vx) < 0.03) b.vx = 0;
+        if (Math.abs(b.vy) < 0.03) b.vy = 0;
+
+        if (b.vx !== 0 || b.vy !== 0) movingCount++;
+
+        // Va chạm băng (Tường) - Trừ đi bán kính lỗ ở góc
+        if (b.x < BALL_RADIUS) { b.vx *= -0.8; b.x = BALL_RADIUS; }
+        if (b.x > BOARD_WIDTH - BALL_RADIUS) { b.vx *= -0.8; b.x = BOARD_WIDTH - BALL_RADIUS; }
+        if (b.y < BALL_RADIUS) { b.vy *= -0.8; b.y = BALL_RADIUS; }
+        if (b.y > BOARD_HEIGHT - BALL_RADIUS) { b.vy *= -0.8; b.y = BOARD_HEIGHT - BALL_RADIUS; }
+
+        // Kiểm tra vào lỗ
+        for (let p of pockets) {
+            let pdx = b.x - p.x;
+            let pdy = b.y - p.y;
+            // Nếu tâm bi nằm trong lỗ (hoặc gần tâm lỗ)
+            if (pdx*pdx + pdy*pdy < (POCKET_RADIUS * 1.2) * (POCKET_RADIUS * 1.2)) {
+                if (b.id === 0) {
+                    // Bi cái vào lỗ (Scratch) -> Đặt lại
+                    setTimeout(() => { b.x = BOARD_WIDTH*0.25; b.y = BOARD_HEIGHT/2; b.vx=0; b.vy=0; }, 500);
+                } else {
+                    // Bi mục tiêu vào lỗ
+                    gameState.pocketedBalls.push(b);
+                    balls.splice(i, 1);
+                    i--; // Giảm index vì mảng bị ngắn lại
+                    break; 
+                }
+            }
+        }
+    }
+
+    // Kiểm tra kiểm tra va chạm giữa các cặp bi
+    for (let i = 0; i < balls.length; i++) {
+        for (let j = i + 1; j < balls.length; j++) {
+            resolveCollision(balls[i], balls[j]);
+        }
+    }
+
+    // Cập nhật trạng thái lăn
+    if (gameState.isMoving && movingCount === 0) {
+        gameState.isMoving = false;
+        statusEl.innerText = "Đến lượt bạn. Hãy chỉnh góc và kéo thanh lực";
+    }
+}
+
+// --- VẼ (RENDERING) ---
+function drawBall(b) {
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, BALL_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = b.color;
+    ctx.fill();
+    
+    // Vẽ số trên bi (simplified)
+    if (b.id > 0) {
+        ctx.fillStyle = b.id === 8 ? "white" : "black";
+        if(b.id > 8) { // Vẽ sọc bằng cách vẽ vòng tròn trắng nhỏ bên trong
+             ctx.beginPath();
+             ctx.arc(b.x, b.y, BALL_RADIUS*0.6, 0, Math.PI*2);
+             ctx.fillStyle = "white";
+             ctx.fill();
+             ctx.fillStyle = "black";
+        }
+        ctx.font = "bold 10px Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(b.id, b.x, b.y);
+    }
+    
+    // Thêm chút đổ bóng cho 3D
+    let gradient = ctx.createRadialGradient(b.x-BALL_RADIUS*0.3, b.y-BALL_RADIUS*0.3, 1, b.x, b.y, BALL_RADIUS);
+    gradient.addColorStop(0, "rgba(255,255,255,0.3)");
+    gradient.addColorStop(1, "rgba(0,0,0,0.2)");
+    ctx.fillStyle = gradient;
+    ctx.fill();
+    ctx.closePath();
+}
+
+function drawGame() {
+    // 1. Xóa nền (Màu bàn bida)
+    ctx.fillStyle = "#27ae60";
+    ctx.fillRect(0, 0, BOARD_WIDTH, BOARD_HEIGHT);
+
+    // 2. Vẽ 6 lỗ (Pocket)
+    ctx.fillStyle = "#1a1a1a";
+    for (let p of pockets) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, POCKET_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.closePath();
+    }
+
+    // 3. Vẽ vạch xuất phát (Head string)
+    ctx.beginPath();
+    ctx.moveTo(BOARD_WIDTH * 0.25, 0);
+    ctx.lineTo(BOARD_WIDTH * 0.25, BOARD_HEIGHT);
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // 4. Vẽ các Bi
+    balls.forEach(drawBall);
+
+    // 5. Vẽ Gậy Cơ và Đường định hướng (nếu bi cái đang đứng yên)
+    if (!gameState.isMoving && cueBall) {
+        // Vẽ đường nét đứt định hướng (hướng bắn tới)
+        ctx.beginPath();
+        ctx.setLineDash([5, 10]);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "rgba(255,255,255,0.4)";
+        const aimDist = 500; // Độ dài đường ngắm
+        // Hướng ngắm ngược với hướng gậy
+        ctx.moveTo(cueBall.x, cueBall.y);
+        ctx.lineTo(cueBall.x - Math.cos(gameState.cueAngle) * aimDist, cueBall.y - Math.sin(gameState.cueAngle) * aimDist);
+        ctx.stroke();
+        ctx.setLineDash([]); // Reset nét liền
+
+        // Vẽ gậy Cơ (nằm phía sau bi cái)
+        const cueLength = 250;
+        const cueOffset = BALL_RADIUS + 5 + (gameState.power * 2); // Thụt ra sau khi tăng lực
+
+        const cueStartX = cueBall.x + Math.cos(gameState.cueAngle) * cueOffset;
+        const cueStartY = cueBall.y + Math.sin(gameState.cueAngle) * cueOffset;
+        const cueEndX = cueBall.x + Math.cos(gameState.cueAngle) * (cueOffset + cueLength);
+        const cueEndY = cueBall.y + Math.sin(gameState.cueAngle) * (cueOffset + cueLength);
+
+        // Gradient cho gậy gỗ
+        let cueGrad = ctx.createLinearGradient(cueStartX, cueStartY, cueEndX, cueEndY);
+        cueGrad.addColorStop(0, "#f5eac3"); // Đầu cơ
+        cueGrad.addColorStop(0.1, "#8e6e46"); // Thân gỗ
+        cueGrad.addColorStop(1, "#3e2723"); // Đuôi cơ
+
+        ctx.beginPath();
+        ctx.lineWidth = 6;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = cueGrad;
+        ctx.moveTo(cueStartX, cueStartY);
+        ctx.lineTo(cueEndX, cueEndY);
+        ctx.stroke();
+    }
+
+    // 6. Vẽ danh sách bi đã ăn (UI đơn giản trên bàn)
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(10, BOARD_HEIGHT - 35, 200, 30);
+    for(let i=0; i<gameState.pocketedBalls.length; i++) {
+        let b = gameState.pocketedBalls[i];
+        ctx.beginPath();
+        ctx.arc(25 + i*BALL_RADIUS*1.5, BOARD_HEIGHT - 20, BALL_RADIUS*0.6, 0, Math.PI*2);
+        ctx.fillStyle = b.color;
+        ctx.fill();
+    }
+}
+
+// --- LOOP CHÍNH ---
+function gameLoop() {
+    updatePhysics();
+    drawGame();
+    requestAnimationFrame(gameLoop);
+}
+
+// --- KHỞI CHẠY ---
+window.addEventListener('resize', resize);
+resize();
+initGame();
+gameLoop();
+
 </script>
 </body>
 </html>
